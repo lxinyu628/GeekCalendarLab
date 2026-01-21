@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>每日天气推送</title>
+  <style>
+    :root { --bg:#0b1220; --card:#121c2f; --text:#e8eefc; --muted:#a9b7d6; --line:#233154; }
+    * { box-sizing: border-box; font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", Arial; }
+    body { margin:0; background: radial-gradient(1200px 800px at 20% 0%, #18284a, var(--bg)); color: var(--text); }
+    .wrap { max-width: 980px; margin: 0 auto; padding: 28px 16px 44px; }
+    h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: .5px; }
+    .sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+    .grid { display:grid; grid-template-columns: 1.2fr .8fr; gap: 14px; }
+    @media (max-width: 860px){ .grid { grid-template-columns: 1fr; } }
+    .card { background: rgba(18,28,47,.88); border: 1px solid rgba(35,49,84,.7); border-radius: 14px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.25); backdrop-filter: blur(6px); }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    label { font-size: 12px; color: var(--muted); }
+    input, select, button {
+      border-radius: 10px; border: 1px solid rgba(35,49,84,.9);
+      background: rgba(9,14,26,.6); color: var(--text);
+      padding: 10px 12px; outline: none;
+    }
+    input { flex: 1 1 240px; }
+    button { cursor:pointer; }
+    button.primary { background: linear-gradient(135deg, #2a6cff, #6a5cff); border: 0; }
+    button.ghost { background: transparent; }
+    .hint { margin-top:10px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .status { margin-top: 10px; font-size: 12px; color: #cfe0ff; }
+    .big {
+      display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;
+    }
+    @media (max-width: 520px){ .big { grid-template-columns: 1fr; } }
+    .metric { padding: 12px; border-radius: 12px; border: 1px solid rgba(35,49,84,.7); background: rgba(9,14,26,.45); }
+    .metric .k { color: var(--muted); font-size: 12px; }
+    .metric .v { font-size: 22px; margin-top: 4px; }
+    table { width:100%; border-collapse: collapse; margin-top: 12px; overflow:hidden; border-radius: 12px; }
+    th, td { padding: 10px 10px; border-bottom: 1px solid rgba(35,49,84,.6); text-align:left; font-size: 13px; }
+    th { color: var(--muted); font-weight: 600; background: rgba(9,14,26,.35); }
+    tr:last-child td { border-bottom: 0; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid rgba(35,49,84,.8); color: var(--muted); }
+    .foot { margin-top: 14px; color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>每日天气推送</h1>
+    <p class="sub">免 Key 获取天气（Open-Meteo）。支持在页面打开期间按你设定的时间发送浏览器通知。</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="row">
+          <div style="flex:1 1 260px">
+            <label>城市 / 地点</label>
+            <input id="city" placeholder="例如：Los Angeles / 北京 / Shanghai" value="Los Angeles" />
+          </div>
+          <div>
+            <label>时区</label>
+            <select id="tz">
+              <option value="auto" selected>自动（随地点）</option>
+              <option value="America/Los_Angeles">America/Los_Angeles</option>
+              <option value="Asia/Shanghai">Asia/Shanghai</option>
+              <option value="UTC">UTC</option>
+            </select>
+          </div>
+          <div>
+            <label>&nbsp;</label><br/>
+            <button class="primary" id="refresh">刷新天气</button>
+          </div>
+        </div>
+
+        <div class="big" id="todayCards" style="display:none">
+          <div class="metric">
+            <div class="k">今天最高 / 最低</div>
+            <div class="v" id="tHighLow">—</div>
+          </div>
+          <div class="metric">
+            <div class="k">降水概率（今天）</div>
+            <div class="v" id="tPop">—</div>
+          </div>
+          <div class="metric">
+            <div class="k">风速（最大）</div>
+            <div class="v" id="tWind">—</div>
+          </div>
+          <div class="metric">
+            <div class="k">天气概况</div>
+            <div class="v" id="tSummary">—</div>
+          </div>
+        </div>
+
+        <table id="forecastTable" style="display:none">
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>概况</th>
+              <th>最高 / 最低</th>
+              <th>降水概率</th>
+              <th>风速</th>
+            </tr>
+          </thead>
+          <tbody id="forecastBody"></tbody>
+        </table>
+
+        <div class="status" id="weatherStatus">准备就绪。</div>
+        <div class="foot">数据来源：Open-Meteo（地理编码 + 预报）。</div>
+      </div>
+
+      <div class="card">
+        <div class="row">
+          <div style="flex:1 1 200px">
+            <label>每日推送时间</label><br/>
+            <input id="pushTime" type="time" value="08:00" />
+          </div>
+          <div style="flex:1 1 220px">
+            <label>推送内容</label><br/>
+            <select id="pushMode">
+              <option value="today" selected>仅今天</option>
+              <option value="today+tomorrow">今天 + 明天</option>
+              <option value="week">未来 7 天摘要</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:10px">
+          <button class="primary" id="enablePush">启用推送</button>
+          <button class="ghost" id="testPush">立即测试推送</button>
+          <span class="pill" id="permPill">通知权限：未知</span>
+        </div>
+
+        <div class="hint">
+          <b>注意：</b>普通网页无法在浏览器完全关闭或后台长期休眠时“准时弹通知”。<br/>
+          这个版本会在你打开页面期间，按设定时间触发推送。要做真正的后台每日推送，一般需要：<br/>
+          1) 做成 PWA + Service Worker（并且平台支持周期同步），或<br/>
+          2) 用后端定时任务 + Web Push（VAPID）向订阅用户推送。
+        </div>
+
+        <div class="status" id="pushStatus">尚未启用推送。</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // --- helpers ---
+  const $ = (id) => document.getElementById(id);
+
+  function wmoText(code) {
+    // WMO Weather interpretation codes (Open-Meteo)
+    const m = {
+      0:"晴朗", 1:"大部晴朗", 2:"局部多云", 3:"阴",
+      45:"雾", 48:"雾凇",
+      51:"小毛毛雨", 53:"中毛毛雨", 55:"大毛毛雨",
+      56:"小冻毛毛雨", 57:"大冻毛毛雨",
+      61:"小雨", 63:"中雨", 65:"大雨",
+      66:"小冻雨", 67:"大冻雨",
+      71:"小雪", 73:"中雪", 75:"大雪",
+      77:"雪粒",
+      80:"小阵雨", 81:"中阵雨", 82:"强阵雨",
+      85:"小阵雪", 86:"强阵雪",
+      95:"雷暴", 96:"雷暴伴小冰雹", 99:"雷暴伴大冰雹"
+    };
+    return m[code] ?? `天气代码 ${code}`;
+  }
+
+  function formatDateISOToLocal(iso, locale="zh-CN") {
+    const d = new Date(iso + "T00:00:00");
+    return d.toLocaleDateString(locale, { month: "2-digit", day: "2-digit", weekday: "short" });
+  }
+
+  async function geocode(name) {
+    const url = new URL("https://geocoding-api.open-meteo.com/v1/search");
+    url.searchParams.set("name", name);
+    url.searchParams.set("count", "1");
+    url.searchParams.set("language", "zh");
+    url.searchParams.set("format", "json");
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("地理编码请求失败");
+    const data = await res.json();
+    if (!data.results || data.results.length === 0) throw new Error("找不到该地点");
+    return data.results[0]; // {latitude, longitude, name, country, timezone...}
+  }
+
+  async function getForecast(lat, lon, timezone) {
+    const url = new URL("https://api.open-meteo.com/v1/forecast");
+    url.searchParams.set("latitude", lat);
+    url.searchParams.set("longitude", lon);
+    url.searchParams.set("daily", [
+      "weathercode",
+      "temperature_2m_max",
+      "temperature_2m_min",
+      "precipitation_probability_max",
+      "windspeed_10m_max"
+    ].join(","));
+    url.searchParams.set("forecast_days", "7");
+    url.searchParams.set("timezone", timezone || "auto");
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("天气请求失败");
+    return await res.json();
+  }
+
+  function buildSummary(cityLabel, daily, mode) {
+    const t = daily.time;
+    const code = daily.weathercode;
+    const tmax = daily.temperature_2m_max;
+    const tmin = daily.temperature_2m_min;
+    const pop = daily.precipitation_probability_max;
+    const wind = daily.windspeed_10m_max;
+
+    const oneDay = (i) =>
+      `${formatDateISOToLocal(t[i])}：${wmoText(code[i])}，${Math.round(tmax[i])}/${Math.round(tmin[i])}°C，降水${pop[i] ?? 0}% ，风${Math.round(wind[i])}km/h`;
+
+    if (mode === "today") {
+      return `${cityLabel}\n${oneDay(0)}`;
+    }
+    if (mode === "today+tomorrow") {
+      return `${cityLabel}\n${oneDay(0)}\n${oneDay(1)}`;
+    }
+    // week
+    const lines = [];
+    for (let i = 0; i < Math.min(7, t.length); i++) lines.push(oneDay(i));
+    return `${cityLabel}\n` + lines.join("\n");
+  }
+
+  // --- state ---
+  let latest = null;   // {cityLabel, daily}
+  let pushTimer = null;
+  let lastPushedDateKey = null;
+
+  function updatePermPill() {
+    const p = Notification?.permission;
+    const el = $("permPill");
+    if (!p) { el.textContent = "通知权限：不支持"; return; }
+    const map = { granted: "已允许", denied: "已拒绝", default: "未决定" };
+    el.textContent = "通知权限：" + (map[p] || p);
+  }
+
+  async function refreshWeather() {
+    try {
+      $("weatherStatus").textContent = "正在获取天气…";
+      $("todayCards").style.display = "none";
+      $("forecastTable").style.display = "none";
+
+      const city = $("city").value.trim() || "Los Angeles";
+      const g = await geocode(city);
+
+      const tzSel = $("tz").value;
+      const timezone = tzSel === "auto" ? (g.timezone || "auto") : tzSel;
+
+      const fc = await getForecast(g.latitude, g.longitude, timezone);
+
+      const cityLabel = `${g.name}${g.admin1 ? " · " + g.admin1 : ""}${g.country ? " · " + g.country : ""}`;
+      latest = { cityLabel, daily: fc.daily, timezone };
+
+      // Today cards
+      const d = fc.daily;
+      $("tHighLow").textContent = `${Math.round(d.temperature_2m_max[0])}°C / ${Math.round(d.temperature_2m_min[0])}°C`;
+      $("tPop").textContent = `${(d.precipitation_probability_max[0] ?? 0)}%`;
+      $("tWind").textContent = `${Math.round(d.windspeed_10m_max[0])} km/h`;
+      $("tSummary").textContent = wmoText(d.weathercode[0]);
+
+      $("todayCards").style.display = "grid";
+
+      // Table
+      const body = $("forecastBody");
+      body.innerHTML = "";
+      for (let i = 0; i < d.time.length; i++) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${formatDateISOToLocal(d.time[i])}</td>
+          <td>${wmoText(d.weathercode[i])}</td>
+          <td>${Math.round(d.temperature_2m_max[i])} / ${Math.round(d.temperature_2m_min[i])} °C</td>
+          <td>${d.precipitation_probability_max[i] ?? 0}%</td>
+          <td>${Math.round(d.windspeed_10m_max[i])} km/h</td>
+        `;
+        body.appendChild(tr);
+      }
+      $("forecastTable").style.display = "table";
+      $("weatherStatus").textContent = `已更新：${cityLabel}（时区：${timezone}）`;
+    } catch (e) {
+      $("weatherStatus").textContent = "获取失败：" + (e?.message || e);
+    }
+  }
+
+  function notify(title, body) {
+    try {
+      new Notification(title, { body });
+    } catch (e) {
+      $("pushStatus").textContent = "通知失败（可能被浏览器拦截）：" + (e?.message || e);
+    }
+  }
+
+  function startScheduler() {
+    if (pushTimer) clearInterval(pushTimer);
+
+    pushTimer = setInterval(() => {
+      if (!latest) return;
+      if (Notification.permission !== "granted") return;
+
+      const timeStr = $("pushTime").value || "08:00";
+      const [hh, mm] = timeStr.split(":").map(x => parseInt(x, 10));
+      if (Number.isNaN(hh) || Number.isNaN(mm)) return;
+
+      const now = new Date();
+      const key = `${now.getFullYear()}-${now.getMonth()+1}-${now.getDate()}`;
+
+      // 每天只推一次；到达 hh:mm 后触发
+      const reached = (now.getHours() > hh) || (now.getHours() === hh && now.getMinutes() >= mm);
+      if (reached && lastPushedDateKey !== key) {
+        const mode = $("pushMode").value;
+        const text = buildSummary(latest.cityLabel, latest.daily, mode);
+        notify("每日天气", text);
+        lastPushedDateKey = key;
+        $("pushStatus").textContent = `已推送：${now.toLocaleString()}`;
+      }
+    }, 10 * 1000);
+
+    $("pushStatus").textContent = "推送已启用：将在你设定的时间点触发（页面保持打开）。";
+  }
+
+  // --- events ---
+  $("refresh").addEventListener("click", refreshWeather);
+
+  $("enablePush").addEventListener("click", async () => {
+    updatePermPill();
+    if (!("Notification" in window)) {
+      $("pushStatus").textContent = "此浏览器不支持通知。";
+      return;
+    }
+    if (Notification.permission !== "granted") {
+      const perm = await Notification.requestPermission();
+      updatePermPill();
+      if (perm !== "granted") {
+        $("pushStatus").textContent = "未获得通知权限，无法推送。";
+        return;
+      }
+    }
+    if (!latest) await refreshWeather();
+    startScheduler();
+  });
+
+  $("testPush").addEventListener("click", async () => {
+    updatePermPill();
+    if (!("Notification" in window)) {
+      $("pushStatus").textContent = "此浏览器不支持通知。";
+      return;
+    }
+    if (Notification.permission !== "granted") {
+      const perm = await Notification.requestPermission();
+      updatePermPill();
+      if (perm !== "granted") {
+        $("pushStatus").textContent = "未获得通知权限，无法推送。";
+        return;
+      }
+    }
+    if (!latest) await refreshWeather();
+    const mode = $("pushMode").value;
+    const text = buildSummary(latest.cityLabel, latest.daily, mode);
+    notify("每日天气（测试）", text);
+    $("pushStatus").textContent = "已发送一条测试通知。";
+  });
+
+  // init
+  updatePermPill();
+  refreshWeather();
+</script>
+</body>
+</html>

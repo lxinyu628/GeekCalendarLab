@@ -1,0 +1,20 @@
+{
+  "sources": [
+    {
+      "name": "chinese-days-zh",
+      "url": "https://cdn.jsdelivr.net/npm/chinese-days/dist/holidays.ics"
+    },
+    {
+      "name": "chinese-days-en",
+      "url": "https://cdn.jsdelivr.net/npm/chinese-days/dist/holidays.en.ics"
+    },
+    {
+      "name": "yangh9-holiday",
+      "url": "https://yangh9.github.io/ChinaCalendar/cal_holiday.ics"
+    },
+    {
+      "name": "yangh9-full",
+      "url": "https://yangh9.github.io/ChinaCalendar/calendar.ics"
+    }
+  ]
+}
