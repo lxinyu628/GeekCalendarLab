@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import holidayData from "../data/holidays.json";
+import overseasHolidayData from "../data/holidays-overseas.json";
 import { HolidayEvent, HolidayType } from "./lib/types";
 import { getLunarInfo } from "./lib/lunar";
 import {
@@ -45,15 +46,76 @@ type PersonalEvent = {
   date: string;
 };
 
-const events = holidayData as HolidayEvent[];
+type SubscriptionLinks = {
+  china: { httpsLink: string; webcalLink: string };
+  overseas: { httpsLink: string; webcalLink: string };
+  other: { httpsLink: string; webcalLink: string };
+};
+
+type SubscriptionKey = "china" | "overseas" | "other";
+
+const chinaEvents = holidayData as HolidayEvent[];
+const overseasEvents = overseasHolidayData as HolidayEvent[];
+const overseasIdSet = new Set(overseasEvents.map((event) => event.id));
+const events = [...chinaEvents, ...overseasEvents];
+
+const subscriptionLabels: Record<SubscriptionKey, string> = {
+  china: "中国节假日/调休",
+  overseas: "海外节假日",
+  other: "其他节日/纪念日"
+};
+
+const subscriptionStyles: Record<SubscriptionKey, string> = {
+  china: "source-china",
+  overseas: "source-overseas",
+  other: "source-other"
+};
+
+const getSubscriptionKey = (event: HolidayEvent): SubscriptionKey => {
+  if (overseasIdSet.has(event.id)) {
+    return "overseas";
+  }
+  if (event.type === "other") {
+    return "other";
+  }
+  return "china";
+};
+
+const matchesSourceFilters = (event: HolidayEvent, filters: Record<SubscriptionKey, boolean>) =>
+  filters[getSubscriptionKey(event)];
+
+const getSourceStyle = (event: HolidayEvent) => subscriptionStyles[getSubscriptionKey(event)];
+
+const getEventBounds = (event: HolidayEvent) => {
+  const start = new Date(event.start);
+  const fallback = { start, end: start };
+  if (!event.end) {
+    return fallback;
+  }
+  const end = new Date(event.end);
+  if (Number.isNaN(end.getTime())) {
+    return fallback;
+  }
+  if (event.allDay) {
+    const inclusiveEnd = addDays(end, -1);
+    if (inclusiveEnd < start) {
+      return fallback;
+    }
+    return { start, end: inclusiveEnd };
+  }
+  return { start, end };
+};
 
 const buildEventMap = (items: HolidayEvent[]) => {
   const map = new Map<string, HolidayEvent[]>();
   for (const item of items) {
-    const dateKey = item.start.slice(0, 10);
-    const current = map.get(dateKey) ?? [];
-    current.push(item);
-    map.set(dateKey, current);
+    const { start, end } = getEventBounds(item);
+    for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
+      const dateKey = toISODate(date);
+      const current = map.get(dateKey) ?? [];
+      current.push(item);
+      map.set(dateKey, current);
+    }
   }
   return map;
 };
@@ -63,18 +125,31 @@ const getUpcoming = (items: HolidayEvent[], now = new Date()) => {
   const end = addDays(start, 45);
   return items
     .filter((item) => {
-      const date = new Date(item.start);
-      return date >= start && date <= end;
+      const bounds = getEventBounds(item);
+      return bounds.end >= start && bounds.start <= end;
     })
     .sort((a, b) => a.start.localeCompare(b.start))
     .slice(0, 8);
 };
 
 const getSourceLinks = () => {
-  const origin = window.location.origin.replace(/^https?:\/\//, "");
-  const httpsLink = `${window.location.origin}/calendar.ics`;
-  const webcalLink = `webcal://${origin}/calendar.ics`;
-  return { httpsLink, webcalLink };
+  const links = {
+    china: "https://al.geekfunlab.com/q/uNkhm0pxH",
+    overseas: "https://al.geekfunlab.com/q/UJ0pe38uO",
+    other: "https://al.geekfunlab.com/q/uj84JWc8I"
+  };
+  const buildLinks = (url: string) => {
+    const origin = url.replace(/^https?:\/\//, "");
+    return {
+      httpsLink: url,
+      webcalLink: `webcal://${origin}`
+    };
+  };
+  return {
+    china: buildLinks(links.china),
+    overseas: buildLinks(links.overseas),
+    other: buildLinks(links.other)
+  };
 };
 
 const getMonthBounds = (date: Date) => {
@@ -84,9 +159,10 @@ const getMonthBounds = (date: Date) => {
 };
 
 const formatEventRange = (event: HolidayEvent) => {
-  const start = event.start.slice(0, 10);
-  const end = event.end ? event.end.slice(0, 10) : null;
-  if (end && end !== start) {
+  const bounds = getEventBounds(event);
+  const start = toISODate(bounds.start);
+  const end = toISODate(bounds.end);
+  if (end !== start) {
     return `${start} - ${end}`;
   }
   return start;
@@ -216,14 +292,19 @@ const WeatherIcon = ({ type }: { type: string }) => {
 export default function App() {
   const [viewDate, setViewDate] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()));
-  const [links, setLinks] = useState<{ httpsLink: string; webcalLink: string } | null>(null);
+  const [links, setLinks] = useState<SubscriptionLinks | null>(null);
   const [viewMode, setViewMode] = useState<"month" | "list">("month");
   const [filters, setFilters] = useState<Record<FilterKey, boolean>>(() => ({
     holiday: true,
     workday: true,
     other: false
   }));
-  const [copiedKey, setCopiedKey] = useState<"webcal" | "https" | null>(null);
+  const [sourceFilters, setSourceFilters] = useState<Record<SubscriptionKey, boolean>>(() => ({
+    china: true,
+    overseas: true,
+    other: true
+  }));
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [weather, setWeather] = useState<WeatherState>(() => ({
     cityInput: "北京",
     timezone: "auto",
@@ -245,9 +326,21 @@ export default function App() {
   const [previewModal, setPreviewModal] = useState<{ date: string } | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
+  const sourceOptions = useMemo(
+    () =>
+      (Object.keys(subscriptionLabels) as SubscriptionKey[]).map((key) => ({
+        id: key,
+        label: subscriptionLabels[key]
+      })),
+    []
+  );
+
   const filteredEvents = useMemo(
-    () => events.filter((event) => filters[event.type]),
-    [filters]
+    () =>
+      events.filter(
+        (event) => filters[event.type] && matchesSourceFilters(event, sourceFilters)
+      ),
+    [filters, sourceFilters]
   );
   const gridDays = useMemo(() => getMonthGrid(viewDate), [viewDate]);
   const eventMap = useMemo(() => buildEventMap(filteredEvents), [filteredEvents]);
@@ -266,8 +359,8 @@ export default function App() {
     const { start, end } = getMonthBounds(viewDate);
     return filteredEvents
       .filter((event) => {
-        const date = new Date(event.start);
-        return date >= start && date < end;
+        const bounds = getEventBounds(event);
+        return bounds.end >= start && bounds.start < end;
       })
       .sort((a, b) => a.start.localeCompare(b.start));
   }, [filteredEvents, viewDate]);
@@ -397,7 +490,22 @@ export default function App() {
     }));
   };
 
-  const copyLink = async (text: string, key: "webcal" | "https") => {
+  const toggleSourceFilter = (key: SubscriptionKey) => {
+    setSourceFilters((prev) => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
+  const setAllSources = (enabled: boolean) => {
+    setSourceFilters({
+      china: enabled,
+      overseas: enabled,
+      other: enabled
+    });
+  };
+
+  const copyLink = async (text: string, key: string) => {
     if (typeof window === "undefined") {
       return;
     }
@@ -583,8 +691,8 @@ export default function App() {
       ) : null}
       <header className="hero">
         <div>
-          <p className="eyebrow">GeekFunLab</p>
-          <h1>日历工坊</h1>
+          <p className="eyebrow">GeekCalendarLab</p>
+          <h1>极客日历实验室</h1>
           <p className="subtitle">极客式节假日订阅与日历视图，一站式管理。</p>
           <div className="actions">
             <a className="button primary" href="#calendar">查看日历</a>
@@ -789,6 +897,36 @@ export default function App() {
           <div>
             <h2>{formatMonthTitle(viewDate)}</h2>
             <p>节假日与调休工作日以颜色区分</p>
+            <div className="source-filters">
+              <div className="source-header">
+                <span className="label">订阅源</span>
+                <div className="source-actions">
+                  <button type="button" onClick={() => setAllSources(true)}>
+                    全选
+                  </button>
+                  <button type="button" onClick={() => setAllSources(false)}>
+                    全不选
+                  </button>
+                </div>
+              </div>
+              <div className="source-list">
+                {sourceOptions.map((source) => (
+                  <button
+                    key={source.id}
+                    type="button"
+                    className={`source-item ${sourceFilters[source.id] ? "active" : ""}`}
+                    onClick={() => toggleSourceFilter(source.id)}
+                  >
+                    <span className="source-checkbox" aria-hidden="true" />
+                    <span
+                      className={`source-shape ${subscriptionStyles[source.id] ?? ""}`}
+                      aria-hidden="true"
+                    />
+                    <span className="source-label">{source.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
           <div className="calendar-controls">
             <div className="view-toggle">
@@ -883,8 +1021,14 @@ export default function App() {
                     ) : null}
                     <div className="markers">
                       {dayEvents.slice(0, 3).map((event) => (
-                        <span key={event.id} className={`badge ${event.type}`}>
-                          {event.type === "workday" ? "补" : event.type === "holiday" ? "休" : "其"}
+                        <span key={event.id} className="marker">
+                          <span className={`badge ${event.type}`}>
+                            {event.type === "workday" ? "补" : event.type === "holiday" ? "休" : "其"}
+                          </span>
+                          <span
+                            className={`source-shape ${getSourceStyle(event)}`}
+                            aria-hidden="true"
+                          />
                         </span>
                       ))}
                       {(personalEventMap.get(key) ?? []).slice(0, 2).map((event) => (
@@ -981,6 +1125,10 @@ export default function App() {
                       <span className={`badge ${event.type}`}>
                         {event.type === "workday" ? "补" : event.type === "holiday" ? "休" : "其"}
                       </span>
+                      <span
+                        className={`source-shape ${getSourceStyle(event)}`}
+                        aria-hidden="true"
+                      />
                       <span className="type-label">{getTypeLabel(event.type)}</span>
                       {lunarInfo.display ? <span className="lunar-badge">{lunarInfo.display}</span> : null}
                     </div>
@@ -1013,45 +1161,122 @@ export default function App() {
 
       <section className="subscribe" id="subscribe">
         <h2>订阅方式</h2>
-        <p>使用 WebCal 或 HTTPS 订阅，我们会提供合并后的节假日 + 调休工作日。</p>
+        <p>提供中国节假日/调休、海外节假日，以及其他节日/纪念日三种订阅。</p>
         <div className="link-grid">
-          <div>
-            <span>WebCal</span>
-            <code>{links?.webcalLink ?? "webcal://your-domain/calendar.ics"}</code>
-            <button
-              className="copy"
-              type="button"
-              disabled={!links}
-              onClick={() => {
-                if (links) {
-                  copyLink(links.webcalLink, "webcal");
-                }
-              }}
-            >
-              复制链接
-            </button>
-            {copiedKey === "webcal" ? <em className="copied">已复制</em> : null}
+          <div className="link-card">
+            <h3>中国节假日 / 调休</h3>
+            <div className="link-row">
+              <span>WebCal</span>
+              <code>{links?.china.webcalLink ?? "webcal://your-domain/calendar.ics"}</code>
+              <button
+                className="copy"
+                type="button"
+                disabled={!links}
+                onClick={() => {
+                  if (links) {
+                    copyLink(links.china.webcalLink, "china-webcal");
+                  }
+                }}
+              >
+                复制链接
+              </button>
+              {copiedKey === "china-webcal" ? <em className="copied">已复制</em> : null}
+            </div>
+            <div className="link-row">
+              <span>HTTPS</span>
+              <code>{links?.china.httpsLink ?? "https://your-domain/calendar.ics"}</code>
+              <button
+                className="copy"
+                type="button"
+                disabled={!links}
+                onClick={() => {
+                  if (links) {
+                    copyLink(links.china.httpsLink, "china-https");
+                  }
+                }}
+              >
+                复制链接
+              </button>
+              {copiedKey === "china-https" ? <em className="copied">已复制</em> : null}
+            </div>
           </div>
-          <div>
-            <span>HTTPS</span>
-            <code>{links?.httpsLink ?? "https://your-domain/calendar.ics"}</code>
-            <button
-              className="copy"
-              type="button"
-              disabled={!links}
-              onClick={() => {
-                if (links) {
-                  copyLink(links.httpsLink, "https");
-                }
-              }}
-            >
-              复制链接
-            </button>
-            {copiedKey === "https" ? <em className="copied">已复制</em> : null}
+          <div className="link-card">
+            <h3>海外节假日（多国合并）</h3>
+            <div className="link-row">
+              <span>WebCal</span>
+              <code>{links?.overseas.webcalLink ?? "webcal://your-domain/calendar-overseas.ics"}</code>
+              <button
+                className="copy"
+                type="button"
+                disabled={!links}
+                onClick={() => {
+                  if (links) {
+                    copyLink(links.overseas.webcalLink, "overseas-webcal");
+                  }
+                }}
+              >
+                复制链接
+              </button>
+              {copiedKey === "overseas-webcal" ? <em className="copied">已复制</em> : null}
+            </div>
+            <div className="link-row">
+              <span>HTTPS</span>
+              <code>{links?.overseas.httpsLink ?? "https://your-domain/calendar-overseas.ics"}</code>
+              <button
+                className="copy"
+                type="button"
+                disabled={!links}
+                onClick={() => {
+                  if (links) {
+                    copyLink(links.overseas.httpsLink, "overseas-https");
+                  }
+                }}
+              >
+                复制链接
+              </button>
+              {copiedKey === "overseas-https" ? <em className="copied">已复制</em> : null}
+            </div>
+          </div>
+          <div className="link-card">
+            <h3>其他节日 / 纪念日</h3>
+            <div className="link-row">
+              <span>WebCal</span>
+              <code>{links?.other.webcalLink ?? "webcal://your-domain/calendar-other.ics"}</code>
+              <button
+                className="copy"
+                type="button"
+                disabled={!links}
+                onClick={() => {
+                  if (links) {
+                    copyLink(links.other.webcalLink, "other-webcal");
+                  }
+                }}
+              >
+                复制链接
+              </button>
+              {copiedKey === "other-webcal" ? <em className="copied">已复制</em> : null}
+            </div>
+            <div className="link-row">
+              <span>HTTPS</span>
+              <code>{links?.other.httpsLink ?? "https://your-domain/calendar-other.ics"}</code>
+              <button
+                className="copy"
+                type="button"
+                disabled={!links}
+                onClick={() => {
+                  if (links) {
+                    copyLink(links.other.httpsLink, "other-https");
+                  }
+                }}
+              >
+                复制链接
+              </button>
+              {copiedKey === "other-https" ? <em className="copied">已复制</em> : null}
+            </div>
           </div>
         </div>
         <ol className="subscribe-steps">
-          <li>复制你需要的订阅地址。</li>
+          <li>选择你需要的订阅类型（中国、海外或其他节日）。</li>
           <li>在系统日历或 Outlook/Google Calendar 中粘贴订阅。</li>
           <li>保持订阅自动刷新，节假日变更会及时同步。</li>
         </ol>
@@ -1059,7 +1284,7 @@ export default function App() {
       </section>
 
       <footer>
-        <p>GeekFunLab 日历工坊，让订阅更轻松。</p>
+        <p>GeekCalendarLab 极客日历实验室，让订阅更轻松。</p>
       </footer>
     </div>
   );

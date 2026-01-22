@@ -6,12 +6,18 @@ import ical from "ical-generator";
 const root = new URL("..", import.meta.url);
 const sourcesPath = new URL("../data/sources.json", import.meta.url);
 const outputDataPath = new URL("../data/holidays.json", import.meta.url);
-const outputIcsPath = new URL("../public/calendar.ics", import.meta.url);
+const outputOverseasDataPath = new URL("../data/holidays-overseas.json", import.meta.url);
+const outputChinaIcsPath = new URL("../public/calendar.ics", import.meta.url);
+const outputOverseasIcsPath = new URL("../public/calendar-overseas.ics", import.meta.url);
+const outputOtherIcsPath = new URL("../public/calendar-other.ics", import.meta.url);
 
 const readSources = async () => {
   const raw = await fs.readFile(sourcesPath, "utf-8");
   const { sources } = JSON.parse(raw);
-  return sources;
+  return sources.map((source) => ({
+    ...source,
+    region: source.region === "overseas" ? "overseas" : "china"
+  }));
 };
 
 const normalizeDate = (icalTime) => {
@@ -31,23 +37,47 @@ const isWeekend = (value) => {
 
 const detectType = (summary, description, start) => {
   const summaryText = summary ?? "";
-  if (summaryText.includes("假期") || summaryText.includes("休") || summaryText.includes("放假")) {
-    return "holiday";
-  }
-  if (
+  const summaryLower = summaryText.toLowerCase();
+  const descriptionText = description ?? "";
+  const descriptionLower = descriptionText.toLowerCase();
+
+  const hasHolidayText =
+    summaryText.includes("假期") ||
+    summaryText.includes("休") ||
+    summaryText.includes("放假") ||
+    summaryLower.includes("holiday") ||
+    summaryLower.includes("day off") ||
+    summaryLower.includes("vacation") ||
+    descriptionText.includes("假期") ||
+    descriptionText.includes("休") ||
+    descriptionText.includes("放假") ||
+    descriptionLower.includes("holiday") ||
+    descriptionLower.includes("day off") ||
+    descriptionLower.includes("vacation");
+
+  const hasWorkdayText =
     summaryText.includes("补班") ||
     summaryText.includes("调休") ||
     summaryText.includes("上班") ||
     summaryText.includes("(班)") ||
-    summaryText.includes("（班）")
-  ) {
-    return isWeekend(start) ? "workday" : "other";
+    summaryText.includes("（班）") ||
+    summaryLower.includes("workday") ||
+    summaryLower.includes("working day") ||
+    summaryLower.includes("make-up") ||
+    summaryLower.includes("makeup") ||
+    summaryLower.includes("compensatory") ||
+    descriptionText.includes("补班") ||
+    descriptionText.includes("调休") ||
+    descriptionText.includes("上班") ||
+    descriptionLower.includes("workday") ||
+    descriptionLower.includes("working day") ||
+    descriptionLower.includes("make-up") ||
+    descriptionLower.includes("makeup") ||
+    descriptionLower.includes("compensatory");
+
+  if (hasHolidayText && !hasWorkdayText) {
+    return "holiday";
   }
-
-  const text = description ?? "";
-  const hasHolidayText = text.includes("假期") || text.includes("休") || text.includes("放假");
-  const hasWorkdayText = text.includes("补班") || text.includes("调休") || text.includes("上班");
-
   if (hasWorkdayText && !hasHolidayText) {
     return isWeekend(start) ? "workday" : "other";
   }
@@ -55,6 +85,53 @@ const detectType = (summary, description, start) => {
     return "holiday";
   }
   return "other";
+};
+
+const cleanTitle = (value) => {
+  if (!value) return "未命名事件";
+  return value
+    .replace(/第\d+天\s*\/\s*共\d+天/g, "")
+    .replace(/[「」『』]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const addUtcDays = (date, amount) => {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + amount);
+  return next;
+};
+
+const expandAllDayEvents = (items) => {
+  const expanded = [];
+  const dayMs = 24 * 60 * 60 * 1000;
+  for (const item of items) {
+    if (!item.allDay || !item.end) {
+      expanded.push(item);
+      continue;
+    }
+    const startDate = new Date(item.start);
+    const endDate = new Date(item.end);
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      expanded.push(item);
+      continue;
+    }
+    const dayCount = Math.round((endDate.getTime() - startDate.getTime()) / dayMs);
+    if (dayCount <= 1) {
+      expanded.push(item);
+      continue;
+    }
+    for (let offset = 0; offset < dayCount; offset += 1) {
+      const dayStart = addUtcDays(startDate, offset);
+      const dayEnd = addUtcDays(startDate, offset + 1);
+      expanded.push({
+        ...item,
+        start: dayStart.toISOString(),
+        end: dayEnd.toISOString()
+      });
+    }
+  }
+  return expanded;
 };
 
 const fetchIcs = async (url) => {
@@ -73,13 +150,12 @@ const parseIcs = (icsText, sourceName) => {
   return vevents
     .map((component) => {
       const event = new ICAL.Event(component);
-    const summary = event.summary || "未命名事件";
-    const description = event.description || "";
-    const start = normalizeDate(event.startDate);
-    const end = normalizeDate(event.endDate);
-    const allDay = event.startDate?.isDate ?? false;
-    const type = detectType(summary, description, start);
-
+      const summary = cleanTitle(event.summary || "未命名事件");
+      const description = event.description || "";
+      const start = normalizeDate(event.startDate);
+      const end = normalizeDate(event.endDate);
+      const allDay = event.startDate?.isDate ?? false;
+      const type = detectType(summary, description, start);
 
       if (!start) {
         return null;
@@ -103,17 +179,21 @@ const normalizeTitle = (title) =>
   title
     .replace(/[（(].*?[)）]/g, "")
     .replace(/[【】\[\]]/g, "")
-    .replace(/\s+/g, "")
+    .replace(/[\s'’"“”.,-]/g, "")
     .trim();
 
-const mergeEvents = (items) => {
+const mergeEvents = (items, options = {}) => {
+  const { includeTitleInKey = false } = options;
   const map = new Map();
   for (const item of items) {
     const dateKey = item.start?.slice(0, 10);
     if (!dateKey) {
       continue;
     }
-    const key = `${dateKey}-${item.type}`;
+    const normalizedTitle = normalizeTitle(item.title || "未命名事件");
+    const key = includeTitleInKey
+      ? `${dateKey}-${item.type}-${normalizedTitle}`
+      : `${dateKey}-${item.type}`;
     const current = map.get(key) ?? [];
     current.push(item);
     map.set(key, current);
@@ -214,17 +294,14 @@ const mergeEvents = (items) => {
 };
 
 
-const writeOutputs = async (items) => {
-  const sorted = [...items].sort((a, b) => a.start.localeCompare(b.start));
-  await fs.writeFile(outputDataPath, JSON.stringify(sorted, null, 2));
-
+const writeCalendar = async ({ items, name, timezone, outputPath }) => {
   const calendar = ical({
-    name: "China Holidays + Workdays",
-    timezone: "Asia/Shanghai",
-    prodId: "-//HoliDayflow//CN"
+    name,
+    timezone,
+    prodId: "-//GeekCalendarLab//CN"
   });
 
-  sorted.forEach((item) => {
+  items.forEach((item) => {
     const event = calendar.createEvent({
       id: item.id,
       summary: item.title,
@@ -234,7 +311,6 @@ const writeOutputs = async (items) => {
       end: item.end ? new Date(item.end) : undefined
     });
 
-    const category = typeof item.type === "string" && item.type.trim().length > 0 ? item.type : "other";
     if (item.type === "workday") {
       event.transparency("OPAQUE");
     } else {
@@ -242,22 +318,72 @@ const writeOutputs = async (items) => {
     }
   });
 
-  await fs.writeFile(outputIcsPath, calendar.toString());
+  await fs.writeFile(outputPath, calendar.toString());
+};
+
+const writeOutputs = async ({ chinaItems, overseasItems }) => {
+  const sortedChina = [...chinaItems].sort((a, b) => a.start.localeCompare(b.start));
+  await fs.writeFile(outputDataPath, JSON.stringify(sortedChina, null, 2));
+
+  const chinaCalendarItems = sortedChina.filter((item) => item.type !== "other");
+  await writeCalendar({
+    items: chinaCalendarItems,
+    name: "GeekCalendarLab China Holidays + Workdays",
+    timezone: "Asia/Shanghai",
+    outputPath: outputChinaIcsPath
+  });
+
+  const otherCalendarItems = sortedChina.filter((item) => item.type === "other");
+  await writeCalendar({
+    items: otherCalendarItems,
+    name: "GeekCalendarLab China Observances",
+    timezone: "Asia/Shanghai",
+    outputPath: outputOtherIcsPath
+  });
+
+  const overseasCalendarItems = [...overseasItems]
+    .filter((item) => item.type === "holiday")
+    .sort((a, b) => a.start.localeCompare(b.start));
+  await fs.writeFile(outputOverseasDataPath, JSON.stringify(overseasCalendarItems, null, 2));
+  await writeCalendar({
+    items: overseasCalendarItems,
+    name: "GeekCalendarLab Overseas Holidays (Multi-country)",
+    timezone: "UTC",
+    outputPath: outputOverseasIcsPath
+  });
 };
 
 const main = async () => {
   const sources = await readSources();
-  const allEvents = [];
+  const eventsByRegion = {
+    china: [],
+    overseas: []
+  };
 
   for (const source of sources) {
     const text = await fetchIcs(source.url);
-    allEvents.push(...parseIcs(text, source.name));
+    const parsed = parseIcs(text, source.name);
+    const expanded = expandAllDayEvents(parsed);
+    if (source.region === "overseas") {
+      eventsByRegion.overseas.push(...expanded);
+    } else {
+      eventsByRegion.china.push(...expanded);
+    }
   }
 
-  const merged = mergeEvents(allEvents);
-  await writeOutputs(merged);
-  const countPath = path.relative(process.cwd(), outputDataPath.pathname);
-  console.log(`Generated ${merged.length} events -> ${countPath}`);
+  const mergedChina = mergeEvents(eventsByRegion.china);
+  const dedupedChina = mergeEvents(mergedChina);
+  const mergedOverseas = mergeEvents(eventsByRegion.overseas, { includeTitleInKey: true });
+  await writeOutputs({ chinaItems: dedupedChina, overseasItems: mergedOverseas });
+
+  const dataPath = path.relative(process.cwd(), outputDataPath.pathname);
+  const chinaPath = path.relative(process.cwd(), outputChinaIcsPath.pathname);
+  const overseasPath = path.relative(process.cwd(), outputOverseasIcsPath.pathname);
+  const otherPath = path.relative(process.cwd(), outputOtherIcsPath.pathname);
+  console.log(`Generated ${dedupedChina.length} China events -> ${dataPath}`);
+  console.log(`China calendar -> ${chinaPath}`);
+  console.log(`Overseas calendar -> ${overseasPath} (${mergedOverseas.length} events)`);
+  console.log(`Other calendar -> ${otherPath}`);
 };
 
 main().catch((error) => {

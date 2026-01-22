@@ -1,8 +1,8 @@
-# GeekFunLab 日历工坊
+# GeekCalendarLab 极客日历实验室
 
 ## 项目概览
 
-GeekFunLab 日历工坊是一个节假日订阅 + 个人日程的前端日历应用，支持 PWA 离线浏览。项目以 Vite + React + TypeScript 构建，通过脚本维护节假日数据，并在前端提供清晰的月视图与列表视图。
+GeekCalendarLab 极客日历实验室是一个节假日订阅 + 个人日程的前端日历应用，支持 PWA 离线浏览。项目以 Vite + React + TypeScript 构建，通过脚本维护节假日数据，并在前端提供清晰的月视图与列表视图。
 
 ## 功能清单
 

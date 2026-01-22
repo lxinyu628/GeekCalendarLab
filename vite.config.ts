@@ -9,8 +9,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["icons/icon.svg"],
       manifest: {
-        name: "HoliDayflow",
-        short_name: "HoliDayflow",
+        name: "极客日历实验室",
+        short_name: "GeekCalendarLab",
         description: "Holiday and workday-aware calendar subscription and web app.",
         theme_color: "#153b2e",
         background_color: "#f6f3ea",

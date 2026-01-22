@@ -2,19 +2,53 @@
   "sources": [
     {
       "name": "chinese-days-zh",
-      "url": "https://cdn.jsdelivr.net/npm/chinese-days/dist/holidays.ics"
+      "url": "https://cdn.jsdelivr.net/npm/chinese-days/dist/holidays.ics",
+      "region": "china"
     },
     {
       "name": "chinese-days-en",
-      "url": "https://cdn.jsdelivr.net/npm/chinese-days/dist/holidays.en.ics"
+      "url": "https://cdn.jsdelivr.net/npm/chinese-days/dist/holidays.en.ics",
+      "region": "china"
     },
     {
       "name": "yangh9-holiday",
-      "url": "https://yangh9.github.io/ChinaCalendar/cal_holiday.ics"
+      "url": "https://yangh9.github.io/ChinaCalendar/cal_holiday.ics",
+      "region": "china"
     },
     {
       "name": "yangh9-full",
-      "url": "https://yangh9.github.io/ChinaCalendar/calendar.ics"
+      "url": "https://yangh9.github.io/ChinaCalendar/calendar.ics",
+      "region": "china"
+    },
+    {
+      "name": "google-us-holidays",
+      "url": "https://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics",
+      "region": "overseas"
+    },
+    {
+      "name": "google-uk-holidays",
+      "url": "https://calendar.google.com/calendar/ical/en.uk%23holiday%40group.v.calendar.google.com/public/basic.ics",
+      "region": "overseas"
+    },
+    {
+      "name": "google-canada-holidays",
+      "url": "https://calendar.google.com/calendar/ical/en.canadian%23holiday%40group.v.calendar.google.com/public/basic.ics",
+      "region": "overseas"
+    },
+    {
+      "name": "google-germany-holidays",
+      "url": "https://calendar.google.com/calendar/ical/en.german%23holiday%40group.v.calendar.google.com/public/basic.ics",
+      "region": "overseas"
+    },
+    {
+      "name": "google-france-holidays",
+      "url": "https://calendar.google.com/calendar/ical/en.french%23holiday%40group.v.calendar.google.com/public/basic.ics",
+      "region": "overseas"
+    },
+    {
+      "name": "google-italy-holidays",
+      "url": "https://calendar.google.com/calendar/ical/en.italian%23holiday%40group.v.calendar.google.com/public/basic.ics",
+      "region": "overseas"
     }
   ]
 }

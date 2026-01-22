@@ -3,6 +3,7 @@
 ## Project snapshot
 - App: Vite + React 19 + TypeScript, PWA enabled.
 - Data: holiday JSON produced from ICS sources.
+- Subscriptions: China, overseas, and other/observances calendars.
 - Language: code is English; UI copy is Chinese.
 - Module system: ES modules ("type": "module").
 - TypeScript: strict mode is enabled.
@@ -14,7 +15,7 @@
 - `src/lib/types.ts`: shared types.
 - `src/styles.css`: global styles and theme.
 - `data/`: inputs and generated holiday data.
-- `public/`: PWA assets and `calendar.ics` output.
+- `public/`: PWA assets and calendar outputs.
 - `scripts/update-holidays.mjs`: ICS ingestion pipeline.
 
 ## Required tools
@@ -84,11 +85,20 @@
 - For data parsing scripts, prefer early exits with clear messages.
 - Do not swallow errors; surface them in the console or throw.
 
+## Scripts and data generation
+- Node scripts live in `scripts/` and run with ES modules.
+- Prefer pure helpers (`normalizeDate`, `mergeEvents`) over inline logic.
+- Keep console output short and actionable.
+- When adding sources, include a `region` field.
+
 ## Data flow
-- `data/sources.json` defines source ICS feeds.
+- `data/sources.json` defines ICS feeds and `region` (china/overseas).
 - `npm run update:holidays` generates:
-  - `data/holidays.json`
-  - `public/calendar.ics`
+  - `data/holidays.json` (China events, includes `other` type)
+  - `data/holidays-overseas.json` (Overseas events for UI)
+  - `public/calendar.ics` (China holidays + workdays)
+  - `public/calendar-overseas.ics` (Overseas holidays, multi-country)
+  - `public/calendar-other.ics` (China other/observances)
 - UI loads `data/holidays.json` at runtime.
 
 ## Styling guidelines
@@ -98,6 +108,12 @@
 - Match rounded, soft UI theme and subtle shadows.
 - Use keyframe animations sparingly; keep them short.
 - Mobile responsive behavior is defined with breakpoints.
+
+## Calendar outputs
+- China subscription output: `public/calendar.ics`.
+- Overseas subscription output: `public/calendar-overseas.ics`.
+- Other/observances output: `public/calendar-other.ics`.
+- Keep all calendars in sync by running `npm run update:holidays` after changes.
 
 ## PWA notes
 - PWA config in `vite.config.ts`.
@@ -112,6 +128,7 @@
 ## Content and localization
 - UI strings are Chinese; keep tone consistent.
 - Avoid mixing languages in a single label unless required.
+- Overseas calendar titles are currently in English; keep UI labels Chinese.
 
 ## Build assumptions
 - Build runs `tsc -b` then `vite build`.
@@ -121,6 +138,7 @@
 ## Safe changes checklist
 - Update holiday data after editing `data/sources.json`.
 - Ensure `public/calendar.ics` stays in sync with `data/holidays.json`.
+- Regenerate `public/calendar-overseas.ics` and `public/calendar-other.ics` when sources change.
 - Keep types aligned with generated JSON fields.
 
 ## What to document after changes
