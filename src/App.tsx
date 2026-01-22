@@ -133,22 +133,15 @@ const getUpcoming = (items: HolidayEvent[], now = new Date()) => {
 };
 
 const getSourceLinks = () => {
-  const links = {
-    china: "https://al.geekfunlab.com/q/uNkhm0pxH",
-    overseas: "https://al.geekfunlab.com/q/UJ0pe38uO",
-    other: "https://al.geekfunlab.com/q/uj84JWc8I"
-  };
-  const buildLinks = (url: string) => {
-    const origin = url.replace(/^https?:\/\//, "");
-    return {
-      httpsLink: url,
-      webcalLink: `webcal://${origin}`
-    };
-  };
+  const host = "calendar.geekfunlab.com";
+  const buildLinks = (path: string) => ({
+    httpsLink: `https://${host}${path}`,
+    webcalLink: `webcal://${host}${path}`
+  });
   return {
-    china: buildLinks(links.china),
-    overseas: buildLinks(links.overseas),
-    other: buildLinks(links.other)
+    china: buildLinks("/subscribe/china"),
+    overseas: buildLinks("/subscribe/overseas"),
+    other: buildLinks("/subscribe/other")
   };
 };
 
