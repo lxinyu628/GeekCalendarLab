@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import holidayData from "../data/holidays.json";
-import overseasHolidayData from "../data/holidays-overseas.json";
-import { HolidayEvent, HolidayType } from "./lib/types";
-import { getLunarInfo } from "./lib/lunar";
+import chinaHolidayDataUrl from "../data/holidays.json?url";
+import overseasHolidayDataUrl from "../data/holidays-overseas.json?url";
+import type { LunarInfo } from "./lib/lunar";
+import type { HolidayEvent, HolidayType } from "./lib/types";
+import type { DailyForecast } from "./lib/weather";
 import {
   formatDateISOToLocal,
   formatLocationLabel,
@@ -27,14 +28,7 @@ type WeatherState = {
   cityInput: string;
   timezone: string;
   label: string;
-  daily: {
-    time: string[];
-    weathercode: number[];
-    temperature_2m_max: number[];
-    temperature_2m_min: number[];
-    precipitation_probability_max: number[];
-    windspeed_10m_max: number[];
-  } | null;
+  daily: DailyForecast | null;
   status: string;
   loading: boolean;
   showFull: boolean;
@@ -54,11 +48,6 @@ type SubscriptionLinks = {
 
 type SubscriptionKey = "china" | "overseas" | "other";
 
-const chinaEvents = holidayData as HolidayEvent[];
-const overseasEvents = overseasHolidayData as HolidayEvent[];
-const overseasIdSet = new Set(overseasEvents.map((event) => event.id));
-const events = [...chinaEvents, ...overseasEvents];
-
 const subscriptionLabels: Record<SubscriptionKey, string> = {
   china: "中国节假日/调休",
   overseas: "海外节假日",
@@ -71,8 +60,11 @@ const subscriptionStyles: Record<SubscriptionKey, string> = {
   other: "source-other"
 };
 
-const getSubscriptionKey = (event: HolidayEvent): SubscriptionKey => {
-  if (overseasIdSet.has(event.id)) {
+const getSubscriptionKey = (
+  event: HolidayEvent,
+  overseasIds: ReadonlySet<string>
+): SubscriptionKey => {
+  if (overseasIds.has(event.id)) {
     return "overseas";
   }
   if (event.type === "other") {
@@ -81,10 +73,26 @@ const getSubscriptionKey = (event: HolidayEvent): SubscriptionKey => {
   return "china";
 };
 
-const matchesSourceFilters = (event: HolidayEvent, filters: Record<SubscriptionKey, boolean>) =>
-  filters[getSubscriptionKey(event)];
+const matchesSourceFilters = (
+  event: HolidayEvent,
+  filters: Record<SubscriptionKey, boolean>,
+  overseasIds: ReadonlySet<string>
+) => filters[getSubscriptionKey(event, overseasIds)];
 
-const getSourceStyle = (event: HolidayEvent) => subscriptionStyles[getSubscriptionKey(event)];
+const getSourceStyle = (event: HolidayEvent, overseasIds: ReadonlySet<string>) =>
+  subscriptionStyles[getSubscriptionKey(event, overseasIds)];
+
+const loadHolidayEvents = async (url: string) => {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to load holiday data: ${response.status}`);
+  }
+  const data: unknown = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error("Holiday data must be an array");
+  }
+  return data as HolidayEvent[];
+};
 
 const getEventBounds = (event: HolidayEvent) => {
   const start = new Date(event.start);
@@ -133,10 +141,11 @@ const getUpcoming = (items: HolidayEvent[], now = new Date()) => {
 };
 
 const getSourceLinks = () => {
-  const host = "calendar.geekfunlab.com";
+  const configuredBase = import.meta.env.VITE_PUBLIC_BASE_URL?.trim();
+  const baseUrl = (configuredBase || window.location.origin).replace(/\/$/, "");
   const buildLinks = (path: string) => ({
-    httpsLink: `https://${host}${path}`,
-    webcalLink: `webcal://${host}${path}`
+    httpsLink: `${baseUrl}${path}`,
+    webcalLink: `${baseUrl}${path}`.replace(/^https?:\/\//, "webcal://")
   });
   return {
     china: buildLinks("/subscribe/china"),
@@ -283,6 +292,9 @@ const WeatherIcon = ({ type }: { type: string }) => {
 };
 
 export default function App() {
+  const [chinaEvents, setChinaEvents] = useState<HolidayEvent[]>([]);
+  const [overseasEvents, setOverseasEvents] = useState<HolidayEvent[]>([]);
+  const [holidayStatus, setHolidayStatus] = useState("正在加载节假日数据…");
   const [viewDate, setViewDate] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()));
   const [links, setLinks] = useState<SubscriptionLinks | null>(null);
@@ -317,7 +329,19 @@ export default function App() {
   } | null>(null);
   const [personalModal, setPersonalModal] = useState<{ date: string } | null>(null);
   const [previewModal, setPreviewModal] = useState<{ date: string } | null>(null);
+  const [lunarMap, setLunarMap] = useState<Map<string, LunarInfo>>(() => new Map());
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const overseasLoadStartedRef = useRef(false);
+
+  const overseasIdSet = useMemo(
+    () => new Set(overseasEvents.map((event) => event.id)),
+    [overseasEvents]
+  );
+  const events = useMemo(
+    () => [...chinaEvents, ...overseasEvents],
+    [chinaEvents, overseasEvents]
+  );
 
   const sourceOptions = useMemo(
     () =>
@@ -331,9 +355,10 @@ export default function App() {
   const filteredEvents = useMemo(
     () =>
       events.filter(
-        (event) => filters[event.type] && matchesSourceFilters(event, sourceFilters)
+        (event) =>
+          filters[event.type] && matchesSourceFilters(event, sourceFilters, overseasIdSet)
       ),
-    [filters, sourceFilters]
+    [events, filters, overseasIdSet, sourceFilters]
   );
   const gridDays = useMemo(() => getMonthGrid(viewDate), [viewDate]);
   const eventMap = useMemo(() => buildEventMap(filteredEvents), [filteredEvents]);
@@ -358,17 +383,74 @@ export default function App() {
       .sort((a, b) => a.start.localeCompare(b.start));
   }, [filteredEvents, viewDate]);
 
-  const lunarMap = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof getLunarInfo>>();
-    gridDays.forEach((day) => {
-      const key = toISODate(day);
-      map.set(key, getLunarInfo(day));
-    });
-    return map;
-  }, [gridDays]);
-
   const currentMonth = viewDate.getMonth();
   const todayKey = toISODate(new Date());
+
+  useEffect(() => {
+    let cancelled = false;
+    loadHolidayEvents(chinaHolidayDataUrl)
+      .then((items) => {
+        if (cancelled) {
+          return;
+        }
+        setChinaEvents(items);
+        setHolidayStatus("节假日与调休工作日以颜色区分");
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "加载失败";
+        if (!cancelled) {
+          setHolidayStatus(`节假日数据加载失败：${message}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sourceFilters.overseas || overseasLoadStartedRef.current) {
+      return;
+    }
+    overseasLoadStartedRef.current = true;
+    let cancelled = false;
+    loadHolidayEvents(overseasHolidayDataUrl)
+      .then((items) => {
+        if (!cancelled) {
+          setOverseasEvents(items);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to load overseas holiday data", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceFilters.overseas]);
+
+  useEffect(() => {
+    let cancelled = false;
+    import("./lib/lunar")
+      .then(({ getLunarInfo }) => {
+        if (cancelled) {
+          return;
+        }
+        const next = new Map<string, LunarInfo>();
+        gridDays.forEach((day) => {
+          const key = toISODate(day);
+          next.set(key, getLunarInfo(day));
+        });
+        setLunarMap(next);
+      })
+      .catch((error: unknown) => {
+        console.error("Failed to load lunar calendar data", error);
+        if (!cancelled) {
+          setLunarMap(new Map());
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [gridDays]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -382,6 +464,24 @@ export default function App() {
       }));
     }
   }, []);
+
+  useEffect(() => {
+    if (!personalModal && !previewModal) {
+      return;
+    }
+    lastFocusedElementRef.current = document.activeElement as HTMLElement | null;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPersonalModal(null);
+        setPreviewModal(null);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      lastFocusedElementRef.current?.focus();
+    };
+  }, [personalModal, previewModal]);
 
   useEffect(() => {
     persistLocalEvents(personalEvents);
@@ -448,18 +548,17 @@ export default function App() {
         throw new Error("无法获取位置");
       }
 
-        const forecast = await getForecast(latitude, longitude);
-        window.localStorage.setItem("weatherCity", weather.cityInput || "北京");
-        window.localStorage.setItem("weatherTimezone", weather.timezone);
+      const forecast = await getForecast(latitude, longitude, timezone);
+      window.localStorage.setItem("weatherCity", weather.cityInput || "北京");
+      window.localStorage.setItem("weatherTimezone", weather.timezone);
 
-        setWeather((prev) => ({
-          ...prev,
-          label: forecast.locationLabel || locationLabel,
-          daily: forecast.daily,
-          status: `已更新：${forecast.locationLabel || locationLabel}（来源：${forecast.provider}）`,
-          loading: false
-        }));
-
+      setWeather((prev) => ({
+        ...prev,
+        label: forecast.locationLabel || locationLabel,
+        daily: forecast.daily,
+        status: `已更新：${forecast.locationLabel || locationLabel}（来源：${forecast.provider}）`,
+        loading: false
+      }));
     } catch (error) {
       const message = error instanceof Error ? error.message : "获取失败";
       setWeather((prev) => ({
@@ -576,9 +675,14 @@ export default function App() {
       ) : null}
       {personalModal ? (
         <div className="modal-overlay">
-          <div className="modal">
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="personal-modal-title"
+          >
             <div className="modal-header">
-              <h3>添加日程</h3>
+              <h3 id="personal-modal-title">添加日程</h3>
               <button
                 type="button"
                 className="close"
@@ -615,9 +719,14 @@ export default function App() {
       ) : null}
       {previewModal ? (
         <div className="modal-overlay">
-          <div className="modal preview">
+          <div
+            className="modal preview"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="preview-modal-title"
+          >
             <div className="modal-header">
-              <h3>当天预览</h3>
+              <h3 id="preview-modal-title">当天预览</h3>
               <button
                 type="button"
                 className="close"
@@ -775,9 +884,6 @@ export default function App() {
               if (!daily) {
                 return null;
               }
-              const temps = daily.temperature_2m_max.slice(0, 7);
-              const lows = daily.temperature_2m_min.slice(0, 7);
-
               return (
                 <>
                   <div className="weather-panel">
@@ -844,7 +950,7 @@ export default function App() {
                       }))
                     }
                   >
-                    <summary>查看未来 7 天详情</summary>
+                    <summary>查看未来 {daily.time.length} 天详情</summary>
                     <table>
                       <thead>
                         <tr>
@@ -889,7 +995,7 @@ export default function App() {
         <div className="calendar-header">
           <div>
             <h2>{formatMonthTitle(viewDate)}</h2>
-            <p>节假日与调休工作日以颜色区分</p>
+            <p>{holidayStatus}</p>
             <div className="source-filters">
               <div className="source-header">
                 <span className="label">订阅源</span>
@@ -908,6 +1014,7 @@ export default function App() {
                     key={source.id}
                     type="button"
                     className={`source-item ${sourceFilters[source.id] ? "active" : ""}`}
+                    aria-pressed={sourceFilters[source.id]}
                     onClick={() => toggleSourceFilter(source.id)}
                   >
                     <span className="source-checkbox" aria-hidden="true" />
@@ -926,6 +1033,7 @@ export default function App() {
               <button
                 type="button"
                 className={viewMode === "month" ? "active" : ""}
+                aria-pressed={viewMode === "month"}
                 onClick={() => setViewMode("month")}
               >
                 月视图
@@ -933,6 +1041,7 @@ export default function App() {
               <button
                 type="button"
                 className={viewMode === "list" ? "active" : ""}
+                aria-pressed={viewMode === "list"}
                 onClick={() => setViewMode("list")}
               >
                 列表
@@ -942,6 +1051,7 @@ export default function App() {
               <button
                 type="button"
                 className={`filter ${filters.holiday ? "active" : ""}`}
+                aria-pressed={filters.holiday}
                 onClick={() => toggleFilter("holiday")}
               >
                 节假日
@@ -949,6 +1059,7 @@ export default function App() {
               <button
                 type="button"
                 className={`filter ${filters.workday ? "active" : ""}`}
+                aria-pressed={filters.workday}
                 onClick={() => toggleFilter("workday")}
               >
                 调休
@@ -956,6 +1067,7 @@ export default function App() {
               <button
                 type="button"
                 className={`filter ${filters.other ? "active" : ""}`}
+                aria-pressed={filters.other}
                 onClick={() => toggleFilter("other")}
               >
                 其他
@@ -1019,7 +1131,7 @@ export default function App() {
                             {event.type === "workday" ? "补" : event.type === "holiday" ? "休" : "其"}
                           </span>
                           <span
-                            className={`source-shape ${getSourceStyle(event)}`}
+                            className={`source-shape ${getSourceStyle(event, overseasIdSet)}`}
                             aria-hidden="true"
                           />
                         </span>
@@ -1106,29 +1218,31 @@ export default function App() {
               <ul className="event-list">
                 {monthEvents.map((event) => {
                   const eventDate = new Date(event.start);
-                  const lunarInfo = getLunarInfo(eventDate);
+                  const lunarInfo = lunarMap.get(toISODate(eventDate));
 
                   return (
-                  <li key={event.id} className={`event-item ${event.type}`}>
-                    <div>
-                      <strong>{event.title}</strong>
-                      <span>{formatEventRange(event)}</span>
-                    </div>
-                    <div className="meta">
-                      <span className={`badge ${event.type}`}>
-                        {event.type === "workday" ? "补" : event.type === "holiday" ? "休" : "其"}
-                      </span>
-                      <span
-                        className={`source-shape ${getSourceStyle(event)}`}
-                        aria-hidden="true"
-                      />
-                      <span className="type-label">{getTypeLabel(event.type)}</span>
-                      {lunarInfo.display ? <span className="lunar-badge">{lunarInfo.display}</span> : null}
-                    </div>
-                    {event.description ? <p>{event.description}</p> : null}
-                  </li>
-                );
-              })}
+                    <li key={event.id} className={`event-item ${event.type}`}>
+                      <div>
+                        <strong>{event.title}</strong>
+                        <span>{formatEventRange(event)}</span>
+                      </div>
+                      <div className="meta">
+                        <span className={`badge ${event.type}`}>
+                          {event.type === "workday" ? "补" : event.type === "holiday" ? "休" : "其"}
+                        </span>
+                        <span
+                          className={`source-shape ${getSourceStyle(event, overseasIdSet)}`}
+                          aria-hidden="true"
+                        />
+                        <span className="type-label">{getTypeLabel(event.type)}</span>
+                        {lunarInfo?.display ? (
+                          <span className="lunar-badge">{lunarInfo.display}</span>
+                        ) : null}
+                      </div>
+                      {event.description ? <p>{event.description}</p> : null}
+                    </li>
+                  );
+                })}
               {personalEvents
                 .filter((event) => event.date.startsWith(viewDate.toISOString().slice(0, 7)))
                 .map((event) => (

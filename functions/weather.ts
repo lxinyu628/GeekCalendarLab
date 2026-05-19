@@ -22,6 +22,19 @@ type NormalizedForecast = {
 
 const isChinaLocation = (lat: number, lon: number) => lat >= 18 && lat <= 54 && lon >= 73 && lon <= 135;
 
+const isValidLocation = (lat: number, lon: number) =>
+  Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+
+const normalizeTimezone = (value: string | null) => {
+  if (!value || value === "auto") {
+    return "auto";
+  }
+  if (value === "UTC" || /^[A-Za-z_]+\/[A-Za-z_]+(?:\/[A-Za-z_]+)?$/.test(value)) {
+    return value;
+  }
+  return "auto";
+};
+
 const mapSeniverseCodeToWmo = (code: string) => {
   const numeric = Number(code);
   if ([0, 1, 2].includes(numeric)) return 0;
@@ -73,7 +86,7 @@ const getSeniverseForecast = async (lat: number, lon: number, env: Env) => {
   url.searchParams.set("language", "zh-Hans");
   url.searchParams.set("unit", "c");
   url.searchParams.set("start", "0");
-  url.searchParams.set("days", "3");
+  url.searchParams.set("days", "7");
 
   const data = await fetchJson(url.toString());
   const result = data.results?.[0];
@@ -133,7 +146,7 @@ const getOpenWeatherForecast = async (lat: number, lon: number, env: Env) => {
   };
 };
 
-const getOpenMeteoForecast = async (lat: number, lon: number) => {
+const getOpenMeteoForecast = async (lat: number, lon: number, timezone: string) => {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
   url.searchParams.set("latitude", lat.toString());
   url.searchParams.set("longitude", lon.toString());
@@ -148,7 +161,7 @@ const getOpenMeteoForecast = async (lat: number, lon: number) => {
     ].join(",")
   );
   url.searchParams.set("forecast_days", "7");
-  url.searchParams.set("timezone", "auto");
+  url.searchParams.set("timezone", timezone);
 
   const data = await fetchJson(url.toString());
   if (!data.daily) {
@@ -160,32 +173,36 @@ const getOpenMeteoForecast = async (lat: number, lon: number) => {
   };
 };
 
-const buildResponse = (data: NormalizedForecast) =>
+const jsonResponse = (data: unknown, status = 200) =>
   new Response(JSON.stringify(data), {
+    status,
     headers: {
       "content-type": "application/json",
-      "cache-control": "public, max-age=900"
+      "cache-control": status >= 400 ? "no-store" : "public, max-age=900"
     }
   });
+
+const buildResponse = (data: NormalizedForecast) => jsonResponse(data);
 
 export const onRequestGet = async ({ request, env }: { request: Request; env: Env }) => {
   const url = new URL(request.url);
   const lat = Number(url.searchParams.get("lat"));
   const lon = Number(url.searchParams.get("lon"));
+  const timezone = normalizeTimezone(url.searchParams.get("timezone"));
 
-  if (Number.isNaN(lat) || Number.isNaN(lon)) {
-    return new Response(JSON.stringify({ error: "invalid_location" }), { status: 400 });
+  if (!isValidLocation(lat, lon)) {
+    return jsonResponse({ error: "invalid_location" }, 400);
   }
 
   const inChina = isChinaLocation(lat, lon);
   const providers = inChina
     ? [
         () => getSeniverseForecast(lat, lon, env),
-        () => getOpenMeteoForecast(lat, lon)
+        () => getOpenMeteoForecast(lat, lon, timezone)
       ]
     : [
         () => getOpenWeatherForecast(lat, lon, env),
-        () => getOpenMeteoForecast(lat, lon)
+        () => getOpenMeteoForecast(lat, lon, timezone)
       ];
 
   let lastError = "unknown";
@@ -198,5 +215,5 @@ export const onRequestGet = async ({ request, env }: { request: Request; env: En
     }
   }
 
-  return new Response(JSON.stringify({ error: lastError }), { status: 502 });
+  return jsonResponse({ error: lastError }, 502);
 };

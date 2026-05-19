@@ -1,6 +1,6 @@
 import { Lunar, HolidayUtil } from "lunar-javascript";
 
-type LunarInfo = {
+export type LunarInfo = {
   display: string;
   lunarText: string;
   festival?: string;

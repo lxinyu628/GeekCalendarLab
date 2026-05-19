@@ -100,7 +100,11 @@ export const reverseGeocode = async (latitude: number, longitude: number) => {
   return data.results[0] as WeatherLocation;
 };
 
-const getOpenMeteoFallback = async (latitude: number, longitude: number) => {
+const getOpenMeteoFallback = async (
+  latitude: number,
+  longitude: number,
+  timezone: string
+) => {
   const url = new URL("https://api.open-meteo.com/v1/forecast");
   url.searchParams.set("latitude", latitude.toString());
   url.searchParams.set("longitude", longitude.toString());
@@ -115,7 +119,7 @@ const getOpenMeteoFallback = async (latitude: number, longitude: number) => {
     ].join(",")
   );
   url.searchParams.set("forecast_days", "7");
-  url.searchParams.set("timezone", "auto");
+  url.searchParams.set("timezone", timezone || "auto");
   const response = await fetch(url.toString());
   if (!response.ok) {
     throw new Error("天气请求失败");
@@ -125,14 +129,19 @@ const getOpenMeteoFallback = async (latitude: number, longitude: number) => {
     daily: data.daily,
     provider: "openmeteo" as const,
     locationLabel: undefined,
-    timezone: "auto"
+    timezone
   };
 };
 
-export const getForecast = async (latitude: number, longitude: number) => {
+export const getForecast = async (
+  latitude: number,
+  longitude: number,
+  timezone = "auto"
+) => {
   const url = new URL("/weather", window.location.origin);
   url.searchParams.set("lat", latitude.toString());
   url.searchParams.set("lon", longitude.toString());
+  url.searchParams.set("timezone", timezone || "auto");
 
   try {
     const response = await fetch(url.toString());
@@ -145,7 +154,7 @@ export const getForecast = async (latitude: number, longitude: number) => {
     }
     return (await response.json()) as ProxyForecastResponse;
   } catch {
-    return getOpenMeteoFallback(latitude, longitude);
+    return getOpenMeteoFallback(latitude, longitude, timezone || "auto");
   }
 };
 

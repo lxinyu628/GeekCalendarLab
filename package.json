@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "check": "npm run check:types && npm run check:scripts",
+    "check:types": "tsc -b",
+    "check:scripts": "node --check scripts/update-holidays.mjs && node --check worker.js",
     "preview": "vite preview",
     "update:holidays": "node scripts/update-holidays.mjs"
   },

@@ -75,6 +75,12 @@ npm install
 npm run dev
 ```
 
+质量检查：
+
+```bash
+npm run check
+```
+
 更新节假日数据：
 
 ```bash
@@ -112,6 +118,10 @@ git push -u origin main
 - `SENIVERSE_PRIVATE_KEY`
 - `OPENWEATHER_KEY`
 
+前端订阅链接默认使用当前访问域名。若要固定生产域名，可配置：
+
+- `VITE_PUBLIC_BASE_URL=https://calendar.geekfunlab.com`
+
 > 心知天气免费版要求标注来源，项目已在页面底部显示数据来源。
 
 ### 4. 代理接口验证
@@ -127,8 +137,12 @@ https://<你的域名>/weather?lat=39.9&lon=116.4
 ### 5. 订阅地址
 
 ```
-https://<你的域名>/calendar.ics
+https://<你的域名>/subscribe/china
+https://<你的域名>/subscribe/overseas
+https://<你的域名>/subscribe/other
 ```
+
+这些地址会由 Cloudflare Pages Functions 记录订阅访问后跳转到对应 ICS 文件。
 
 ## 注意事项
 

@@ -1,18 +1,43 @@
-const targets = {
+type SubscriptionKey = "china" | "overseas" | "other";
+
+type Env = {
+  UMAMI_ENDPOINT?: string;
+  UMAMI_WEBSITE_ID?: string;
+};
+
+type PagesContext = {
+  request: Request;
+  env: Env;
+  params: {
+    type?: string | string[];
+  };
+  waitUntil(promise: Promise<unknown>): void;
+};
+
+const targets: Record<SubscriptionKey, string> = {
   china: "/calendar.ics",
   overseas: "/calendar-overseas.ics",
   other: "/calendar-other.ics"
 };
 
-const toResponse = (status, message) =>
+const isSubscriptionKey = (value: string): value is SubscriptionKey => value in targets;
+
+const toResponse = (status: number, message: string) =>
   new Response(message, {
     status,
     headers: { "content-type": "text/plain; charset=utf-8" }
   });
 
-const buildEventPayload = (request, path, websiteId, type) => {
+const getLanguage = (request: Request) =>
+  (request.headers.get("accept-language") || "en").split(",")[0];
+
+const buildEventPayload = (
+  request: Request,
+  path: string,
+  websiteId: string,
+  type: SubscriptionKey,
+) => {
   const url = new URL(request.url);
-  const language = (request.headers.get("accept-language") || "en").split(",")[0];
   return {
     payload: {
       website: websiteId,
@@ -20,7 +45,7 @@ const buildEventPayload = (request, path, websiteId, type) => {
       hostname: url.hostname,
       title: `Subscription ${path}`,
       referrer: request.headers.get("referer") || "",
-      language,
+      language: getLanguage(request),
       screen: "0x0",
       name: "subscription",
       data: { type }
@@ -29,9 +54,8 @@ const buildEventPayload = (request, path, websiteId, type) => {
   };
 };
 
-const buildPageviewPayload = (request, path, websiteId) => {
+const buildPageviewPayload = (request: Request, path: string, websiteId: string) => {
   const url = new URL(request.url);
-  const language = (request.headers.get("accept-language") || "en").split(",")[0];
   return {
     payload: {
       website: websiteId,
@@ -39,14 +63,19 @@ const buildPageviewPayload = (request, path, websiteId) => {
       hostname: url.hostname,
       title: `Subscription ${path}`,
       referrer: request.headers.get("referer") || "",
-      language,
+      language: getLanguage(request),
       screen: "0x0"
     },
     type: "pageview"
   };
 };
 
-const sendUmamiEvent = async (request, env, path, type) => {
+const sendUmamiEvent = async (
+  request: Request,
+  env: Env,
+  path: string,
+  type: SubscriptionKey,
+) => {
   if (!env.UMAMI_ENDPOINT || !env.UMAMI_WEBSITE_ID) {
     return;
   }
@@ -62,11 +91,11 @@ const sendUmamiEvent = async (request, env, path, type) => {
       body: JSON.stringify(payload)
     });
   } catch {
-    // ignore tracking failures
+    // Tracking failures must never block calendar subscription redirects.
   }
 };
 
-const sendUmamiPageview = async (request, env, path) => {
+const sendUmamiPageview = async (request: Request, env: Env, path: string) => {
   if (!env.UMAMI_ENDPOINT || !env.UMAMI_WEBSITE_ID) {
     return;
   }
@@ -83,32 +112,25 @@ const sendUmamiPageview = async (request, env, path) => {
       body: JSON.stringify(payload)
     });
   } catch {
-    // ignore tracking failures
+    // Tracking failures must never block calendar subscription redirects.
   }
 };
 
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
-    const [, base, type] = url.pathname.split("/");
-    if (base !== "subscribe" || !type) {
-      return toResponse(404, "Not found");
-    }
-
-    const targetPath = targets[type];
-    if (!targetPath) {
-      return toResponse(404, "Unknown subscription type");
-    }
-
-    const subscribePath = `/subscribe/${type}`;
-    ctx.waitUntil(
-      Promise.allSettled([
-        sendUmamiPageview(request, env, subscribePath),
-        sendUmamiEvent(request, env, subscribePath, type)
-      ])
-    );
-
-    const targetUrl = new URL(targetPath, url.origin).toString();
-    return Response.redirect(targetUrl, 302);
+export const onRequestGet = ({ request, env, params, waitUntil }: PagesContext) => {
+  const rawType = Array.isArray(params.type) ? params.type[0] : params.type;
+  if (!rawType || !isSubscriptionKey(rawType)) {
+    return toResponse(404, "Unknown subscription type");
   }
+
+  const url = new URL(request.url);
+  const subscribePath = `/subscribe/${rawType}`;
+  waitUntil(
+    Promise.allSettled([
+      sendUmamiPageview(request, env, subscribePath),
+      sendUmamiEvent(request, env, subscribePath, rawType)
+    ])
+  );
+
+  const targetUrl = new URL(targets[rawType], url.origin).toString();
+  return Response.redirect(targetUrl, 302);
 };
